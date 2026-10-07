@@ -44,10 +44,19 @@ Describe your fixed game in numbered steps so a reader can follow along without 
 ## 🧪 Test Results
 
 ```
-# Paste your pytest output here, e.g.:
-# pytest tests/
-# ========================= X passed in 0.XXs =========================
+$ python -m pytest tests/
+tests/test_app_ui.py ....                                                [ 17%]
+tests/test_game_logic.py ...................                             [100%]
+
+============================== 23 passed in 1.07s ==============================
 ```
+
+Breakdown: 3 starter tests (previously failing with `NotImplementedError`),
+16 new unit tests in `tests/test_game_logic.py` targeting `parse_guess` range
+validation and `check_guess` integer comparison, and 4 UI-level tests in
+`tests/test_app_ui.py` that drive the real `app.py` through Streamlit's
+`AppTest` harness to confirm New Game works after a win and out-of-range
+guesses are rejected without consuming an attempt.
 
 ## 🚀 Stretch Features
 

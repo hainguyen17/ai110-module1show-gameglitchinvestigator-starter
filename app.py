@@ -1,70 +1,16 @@
 import random
 import streamlit as st
 
-def get_range_for_difficulty(difficulty: str):
-    if difficulty == "Easy":
-        return 1, 20
-    if difficulty == "Normal":
-        return 1, 100
-    if difficulty == "Hard":
-        return 1, 50
-    return 1, 100
-
-
-def parse_guess(raw: str):
-    if raw is None:
-        return False, None, "Enter a guess."
-
-    if raw == "":
-        return False, None, "Enter a guess."
-
-    try:
-        if "." in raw:
-            value = int(float(raw))
-        else:
-            value = int(raw)
-    except Exception:
-        return False, None, "That is not a number."
-
-    # FIXME (Bug 3): Logic breaks here. Only checks "is it a number", never
-    # checks low <= value <= high. 1000000 and -1 both pass as valid guesses.
-    return True, value, None
-
-
-def check_guess(guess, secret):
-    if guess == secret:
-        return "Win", "🎉 Correct!"
-
-    try:
-        if guess > secret:
-            return "Too High", "📈 Go HIGHER!"
-        else:
-            return "Too Low", "📉 Go LOWER!"
-    except TypeError:
-        g = str(guess)
-        if g == secret:
-            return "Win", "🎉 Correct!"
-        if g > secret:
-            return "Too High", "📈 Go HIGHER!"
-        return "Too Low", "📉 Go LOWER!"
-
-
-def update_score(current_score: int, outcome: str, attempt_number: int):
-    if outcome == "Win":
-        points = 100 - 10 * (attempt_number + 1)
-        if points < 10:
-            points = 10
-        return current_score + points
-
-    if outcome == "Too High":
-        if attempt_number % 2 == 0:
-            return current_score + 5
-        return current_score - 5
-
-    if outcome == "Too Low":
-        return current_score - 5
-
-    return current_score
+# FIX: Refactored game logic into logic_utils.py using Cursor agent mode so
+# app.py only handles UI and session state. Reviewed the full diff of both
+# files before accepting; the only behavior changes are the ones marked FIX.
+from logic_utils import (
+    check_guess,
+    get_range_for_difficulty,
+    hint_message,
+    parse_guess,
+    update_score,
+)
 
 st.set_page_config(page_title="Glitchy Guesser", page_icon="🎮")
 
@@ -111,7 +57,7 @@ if "history" not in st.session_state:
 st.subheader("Make a guess")
 
 st.info(
-    f"Guess a number between 1 and 100. "
+    f"Guess a number between {low} and {high}. "
     f"Attempts left: {attempt_limit - st.session_state.attempts}"
 )
 
@@ -136,11 +82,17 @@ with col3:
     show_hint = st.checkbox("Show hint", value=True)
 
 if new_game:
-    # FIXME (Bug 1): Logic breaks here. Resets attempts and secret but never
-    # resets st.session_state.status back to "playing", so the status gate
-    # below calls st.stop() on every rerun and both buttons appear dead.
+    # FIX (Bug 1): The original reset attempts and secret but never reset
+    # status, so the gate below kept calling st.stop() and both buttons looked
+    # dead after a win. Now every piece of game state is reset, and the new
+    # secret respects the current difficulty range instead of hardcoded 1-100.
+    # Suggested by Cursor chat after I pointed it at the FIXME marker; verified
+    # by winning a round and confirming New Game starts a fresh playable round.
     st.session_state.attempts = 0
-    st.session_state.secret = random.randint(1, 100)
+    st.session_state.score = 0
+    st.session_state.history = []
+    st.session_state.status = "playing"
+    st.session_state.secret = random.randint(low, high)
     st.success("New game started.")
     st.rerun()
 
@@ -152,25 +104,27 @@ if st.session_state.status != "playing":
     st.stop()
 
 if submit:
-    st.session_state.attempts += 1
-
-    ok, guess_int, err = parse_guess(raw_guess)
+    # FIX (Bug 3): parse_guess now receives the difficulty range and rejects
+    # anything outside it. The attempt counter is incremented only after the
+    # guess passes validation, so typing 1000000, -1, or "abc" no longer burns
+    # an attempt. Verified in the live app and with test_parse_guess_* in
+    # tests/test_game_logic.py.
+    ok, guess_int, err = parse_guess(raw_guess, low, high)
 
     if not ok:
-        st.session_state.history.append(raw_guess)
         st.error(err)
     else:
+        st.session_state.attempts += 1
         st.session_state.history.append(guess_int)
 
-        if st.session_state.attempts % 2 == 0:
-            secret = str(st.session_state.secret)
-        else:
-            secret = st.session_state.secret
-
-        outcome, message = check_guess(guess_int, secret)
+        # FIX: Removed the original "convert secret to a string on even
+        # attempts" block. It forced check_guess into a lexicographic string
+        # comparison and inverted the hint on every other guess. check_guess
+        # now always compares integers.
+        outcome = check_guess(guess_int, st.session_state.secret)
 
         if show_hint:
-            st.warning(message)
+            st.warning(hint_message(outcome))
 
         st.session_state.score = update_score(
             current_score=st.session_state.score,

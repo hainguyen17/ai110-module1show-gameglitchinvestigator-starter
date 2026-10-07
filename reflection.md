@@ -45,18 +45,21 @@ Document at least 3 bugs you found. Add rows as needed.
 
 ## 2. How did you use AI as a teammate?
 
-- Which AI tools did you use on this project (for example: ChatGPT, Gemini, Copilot)?
-- Give one example of an AI suggestion that was correct (including what the AI suggested and how you verified the result).
-- Give one example of an AI suggestion you did not accept as written (including what the AI suggested, why you rejected or changed it, and how you verified your version). It does not have to be a suggestion that was wrong: over-engineered, out of scope, harder to read, or a poor fit for this codebase all count.
+**Tools used.** I used Cursor's agent mode (Claude) for the whole repair. The workflow was: mark each crime scene in `app.py` with a `# FIXME` comment, point the agent at that marker with `app.py` and `logic_utils.py` attached, and review every diff before accepting. I committed the FIXME markers first (commit `af27d7b`) so the before state is preserved in git history.
+
+**A suggestion that was correct.** For Bug 1, the agent identified that the New Game handler reset `attempts` and `secret` but never reset `st.session_state.status`, so the status gate at line 140 kept calling `st.stop()` before the submit handler ran. It proposed resetting all five state keys (`attempts`, `score`, `history`, `status`, `secret`) and drawing the new secret from `random.randint(low, high)` instead of the hardcoded `1, 100`. I verified this two ways. First, I ran a Streamlit `AppTest` script against the original `app.py` and confirmed the bug: after winning and clicking New Game, `status` stayed `"won"` and the "You already won" banner was still rendered. Second, I ran the same script against the fixed file and `status` returned to `"playing"`, `attempts` reset to 0, and a follow-up wrong guess produced a hint, proving the game was playable again.
+
+**A suggestion I did not accept as written.** When the agent moved `update_score` into `logic_utils.py`, its first draft rewrote the scoring rules: it replaced `100 - 10 * (attempt_number + 1)` with `max(10, 100 - 10 * attempt_number)` and collapsed the `Too High` and `Too Low` branches into a single `-5` penalty. The simplified version was cleaner, and the original `+5 on even-numbered Too High` branch looks like a bug. I rejected it anyway because it was out of scope for the two bugs I was targeting, it silently changed the player's score, and it made the refactor diff harder to review since I was no longer able to confirm "moved, not modified" at a glance. I asked for the original body restored verbatim with a `# FIXME` comment marking the suspicious branch for a later pass. I verified the result by diffing the `update_score` body in `logic_utils.py` against the original in `git show af27d7b:app.py` and confirming the logic lines matched.
 
 ---
 
 ## 3. Debugging and testing your fixes
 
-- How did you decide whether a bug was really fixed?
-- Describe at least one test you ran (manual or using pytest)  
-  and what it showed you about your code.
-- Did AI help you design or understand any tests? How?
+**How I decided a bug was fixed.** I required evidence at three layers before calling a fix done. Layer one is unit tests on the pure logic in `logic_utils.py`. Layer two is UI-level tests that drive the real `app.py` through Streamlit's `AppTest` harness and simulate the exact click sequence that reproduced the bug in the browser. Layer three is a before/after check: the same reproduction script run against the original `app.py` must fail, and run against the fixed `app.py` must pass. A test that passes on both versions proves nothing, so this third layer mattered most.
+
+**Tests I ran.** `pytest tests/` now reports 23 passed in 1.07s: the 3 starter tests, 16 new unit tests in `tests/test_game_logic.py`, and 4 UI tests in `tests/test_app_ui.py`. The three starter tests failed with `NotImplementedError` before the refactor and pass now. The test that taught me the most was `test_bug3_out_of_range_guess_is_rejected_and_costs_no_attempt`. It submits `1000000`, `-1`, `0`, and `101` through the live app and asserts an error is shown, no hint is shown, and `attempts` does not change. On the original code the same inputs produced no error, rendered a "Go LOWER!" hint, and incremented `attempts` from 1 to 2, which confirmed the increment-before-validation ordering was part of the bug and not just the missing range check. A second useful test was `test_check_guess_integer_comparison_not_string`, which asserts `check_guess(60, 7) == "Too High"`. Lexicographically `"60" < "7"`, so this single pair catches any regression toward the string-comparison fallback the original code relied on.
+
+**How AI helped with testing.** Two contributions were decisive. First, the agent pointed out that the starter tests assert `check_guess(60, 50) == "Too High"`, a plain string, while the `app.py` version returned a `(outcome, message)` tuple. That observation shaped the refactor: `check_guess` returns only the outcome string and the UI text moved to a new `hint_message` function. Second, I did not know Streamlit had a `streamlit.testing.v1.AppTest` harness. The agent suggested it as a way to verify the New Game fix without clicking through the browser, and it turned a manual "did the buttons work" check into a repeatable 1-second test. I still ran `streamlit run app.py` and confirmed the server returned HTTP 200 on `/` and `ok` on `/_stcore/health` with no tracebacks in the log.
 
 ---
 
