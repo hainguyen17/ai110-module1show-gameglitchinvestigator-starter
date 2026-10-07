@@ -26,6 +26,8 @@ def parse_guess(raw: str):
     except Exception:
         return False, None, "That is not a number."
 
+    # FIXME (Bug 3): Logic breaks here. Only checks "is it a number", never
+    # checks low <= value <= high. 1000000 and -1 both pass as valid guesses.
     return True, value, None
 
 
@@ -93,6 +95,8 @@ if "secret" not in st.session_state:
     st.session_state.secret = random.randint(low, high)
 
 if "attempts" not in st.session_state:
+    # FIXME (Bug 2, not fixed in this pass): attempts starts at 1 instead of 0,
+    # so "Attempts left" is off by one from the first guess and can reach -1.
     st.session_state.attempts = 1
 
 if "score" not in st.session_state:
@@ -132,6 +136,9 @@ with col3:
     show_hint = st.checkbox("Show hint", value=True)
 
 if new_game:
+    # FIXME (Bug 1): Logic breaks here. Resets attempts and secret but never
+    # resets st.session_state.status back to "playing", so the status gate
+    # below calls st.stop() on every rerun and both buttons appear dead.
     st.session_state.attempts = 0
     st.session_state.secret = random.randint(1, 100)
     st.success("New game started.")
