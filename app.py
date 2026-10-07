@@ -37,29 +37,49 @@ low, high = get_range_for_difficulty(difficulty)
 st.sidebar.caption(f"Range: {low} to {high}")
 st.sidebar.caption(f"Attempts allowed: {attempt_limit}")
 
-if "secret" not in st.session_state:
+
+def start_new_round():
+    """Reset every piece of game state for the current difficulty."""
+    st.session_state.difficulty = difficulty
     st.session_state.secret = random.randint(low, high)
-
-if "attempts" not in st.session_state:
-    # FIXME (Bug 2, not fixed in this pass): attempts starts at 1 instead of 0,
-    # so "Attempts left" is off by one from the first guess and can reach -1.
-    st.session_state.attempts = 1
-
-if "score" not in st.session_state:
+    st.session_state.attempts = 0
     st.session_state.score = 0
-
-if "status" not in st.session_state:
+    st.session_state.history = []
     st.session_state.status = "playing"
 
-if "history" not in st.session_state:
-    st.session_state.history = []
+
+# FIX (Challenge 1, edge case 3): Changing difficulty mid-game used to leave
+# the old secret in place. Going from Normal (secret 87) to Hard (range 1-50)
+# made the game unwinnable, and the Bug 3 range check then rejected the correct
+# answer. The game now resets whenever the difficulty changes. Found by an
+# AppTest probe, verified by test_difficulty_change_resets_secret_into_range.
+#
+# This also runs on the first load (no "difficulty" key yet), so it is the
+# single place all game state is initialized.
+#
+# FIX (Bug 2): The old init set attempts = 1, which made "Attempts left" read
+# one short from the first guess and reach -1. attempts now starts at 0 in
+# start_new_round(), and the separate per-key init blocks were removed.
+if st.session_state.get("difficulty") != difficulty:
+    start_new_round()
 
 st.subheader("Make a guess")
 
-st.info(
-    f"Guess a number between {low} and {high}. "
-    f"Attempts left: {attempt_limit - st.session_state.attempts}"
-)
+# FIX (Challenge 1, edge case 4): This banner used to be rendered here, before
+# the submit handler ran, so "Attempts left" always lagged one guess behind the
+# real counter. Found by test_bug2_attempts_left_counts_down_from_limit_to_zero,
+# which expected 7 after the first wrong guess and saw 8. The slot is reserved
+# here with st.empty() and filled by render_attempts_banner() after state is
+# final, in both the normal path and the early-exit path.
+attempts_banner = st.empty()
+
+
+def render_attempts_banner():
+    attempts_banner.info(
+        f"Guess a number between {low} and {high}. "
+        f"Attempts left: {attempt_limit - st.session_state.attempts}"
+    )
+
 
 with st.expander("Developer Debug Info"):
     st.write("Secret:", st.session_state.secret)
@@ -84,19 +104,16 @@ with col3:
 if new_game:
     # FIX (Bug 1): The original reset attempts and secret but never reset
     # status, so the gate below kept calling st.stop() and both buttons looked
-    # dead after a win. Now every piece of game state is reset, and the new
-    # secret respects the current difficulty range instead of hardcoded 1-100.
+    # dead after a win. start_new_round() resets every piece of game state and
+    # draws the secret from the current difficulty range instead of 1-100.
     # Suggested by Cursor chat after I pointed it at the FIXME marker; verified
     # by winning a round and confirming New Game starts a fresh playable round.
-    st.session_state.attempts = 0
-    st.session_state.score = 0
-    st.session_state.history = []
-    st.session_state.status = "playing"
-    st.session_state.secret = random.randint(low, high)
+    start_new_round()
     st.success("New game started.")
     st.rerun()
 
 if st.session_state.status != "playing":
+    render_attempts_banner()
     if st.session_state.status == "won":
         st.success("You already won. Start a new game to play again.")
     else:
@@ -147,6 +164,8 @@ if submit:
                     f"The secret was {st.session_state.secret}. "
                     f"Score: {st.session_state.score}"
                 )
+
+render_attempts_banner()
 
 st.divider()
 st.caption("Built by an AI that claims this code is production-ready.")

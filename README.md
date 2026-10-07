@@ -29,64 +29,90 @@ It wrote the code, ran away, and now the game is unplayable.
 
 **Bugs found.** I documented three bugs in `reflection.md` section 1 with a reproduction table. (1) After a win, both the Submit Guess and New Game buttons stopped responding, because the New Game handler reset `attempts` and `secret` but never reset `status` back to `"playing"`, so the status gate called `st.stop()` on every rerun. (2) The attempt counter is initialized to 1 instead of 0, so "Attempts left" is off by one from the first guess and reaches `-1` by the 5th. On top of that, the code converted the secret to a string on even-numbered attempts, forcing `check_guess` into a lexicographic comparison that inverted the hint. (3) `parse_guess` accepted any integer at all, including `1000000` and `-1`, even though the UI promises a 1 to 100 range, and each invalid guess still consumed an attempt.
 
-**Fixes applied.** I fixed bugs 1 and 3 in this pass and deferred bug 2 with a `# FIXME` marker at `app.py` line 44. New Game now resets all five session keys and draws the secret from the active difficulty range. `parse_guess` takes `low` and `high` and rejects out-of-range input with "Enter a number between 1 and 100." The attempt counter increments only after validation passes. As part of the fix I moved `get_range_for_difficulty`, `parse_guess`, `check_guess`, and `update_score` from `app.py` into `logic_utils.py`. `check_guess` now returns a plain outcome string to match the starter tests, the hint text lives in a new `hint_message()` with the Higher/Lower direction corrected, and the string-secret hack plus its `TypeError` fallback are gone. Each change site in the code carries a `# FIX` comment describing what changed and how it was verified.
+**Fixes applied.** All three bugs are now fixed. New Game calls `start_new_round()`, which resets all six session keys and draws the secret from the active difficulty range. `parse_guess` takes `low` and `high` and rejects out-of-range input with "Enter a number between 1 and 100." The attempt counter increments only after validation passes and starts at 0, so "Attempts left" counts 8 down to 0 on Normal. As part of the fix I moved `get_range_for_difficulty`, `parse_guess`, `check_guess`, and `update_score` from `app.py` into `logic_utils.py`. `check_guess` now returns a plain outcome string to match the starter tests, the hint text lives in a new `hint_message()` with the Higher/Lower direction corrected, and the string-secret hack plus its `TypeError` fallback are gone. Each change site in the code carries a `# FIX` comment describing what changed and how it was verified.
+
+**Edge cases found after the fixes (Challenge 1).** Probing the repaired game with hostile input exposed four more defects, all now fixed and covered by tests. (1) `1.0e999` parsed to float infinity and `int(inf)` raised `OverflowError`, which the except clause did not catch, so the app crashed with a traceback. (2) `100.7` truncated to 100 and passed the 1 to 100 range check, and `42.9` silently became 42. Fractional input is now rejected with "Enter a whole number." (3) Switching difficulty mid-game from Normal to Hard kept a secret of 87 while the range shrank to 1 to 50, so the range check rejected the only winning guess. Changing difficulty now starts a new round. (4) The "Attempts left" banner rendered before the submit handler ran, so it always lagged one guess behind. It is now drawn into an `st.empty()` placeholder after state is final. Details and prompts are in `ai_interactions.md`.
+
+**Known remaining quirk.** `update_score` awards +5 instead of -5 for a "Too High" guess on even-numbered attempts. It is marked `# FIXME` in `logic_utils.py` and left in place because it is a scoring rule, not an input edge case, and changing it was out of scope for every pass so far. It is visible in step 6 of the walkthrough below.
 
 ## 📸 Demo Walkthrough
 
 The sequence below is a real run captured with Streamlit's `AppTest` harness against the current `app.py`. Difficulty is Normal (range 1 to 100, 8 attempts). The secret was pinned to 55 through the Developer Debug Info panel so the steps are reproducible.
 
-1. The game loads and shows "Guess a number between 1 and 100." Score is 0.
-2. User enters `1000000`. The game shows the error "Enter a number between 1 and 100." No attempt is consumed and no hint is shown.
-3. User enters `abc`. The game shows "That is not a number." No attempt is consumed.
-4. User enters `40`. The game shows "Too low. Go HIGHER!" Score drops to -5. Attempts used: 1.
-5. User enters `70`. The game shows "Too high. Go LOWER!" Score drops to -10. Attempts used: 2.
-6. User enters `55`. The game shows "Correct!" followed by "You won! The secret was 55. Final score: 40." Balloons fire and the status changes to won.
-7. User clicks Submit Guess again. The game shows "You already won. Start a new game to play again." and ignores the input.
-8. User clicks New Game. Score resets to 0, attempts reset to 0, history clears, a new secret is drawn, and the guess box is live again. Before the fix, this click did nothing.
-
-Known gap visible in this run: the "Attempts left" caption reads 7 at the start of a Normal game instead of 8. That is bug 2 (attempts initialized to 1), which is marked `# FIXME` and not yet fixed.
+1. The game loads and shows "Guess a number between 1 and 100. Attempts left: 8." Score is 0.
+2. User enters `1000000`. The game shows "Enter a number between 1 and 100." No attempt is consumed and no hint is shown.
+3. User enters `1.0e999`. The game shows "That is not a number." Before the Challenge 1 fix this crashed the app with `OverflowError`.
+4. User enters `42.9`. The game shows "Enter a whole number." Before the fix this was silently truncated to 42.
+5. User enters `40`. The game shows "Too low. Go HIGHER!" Score drops to -5. Attempts left: 7.
+6. User enters `70`. The game shows "Too high. Go LOWER!" Score moves to 0 (the +5 even-attempt quirk noted above). Attempts left: 6.
+7. User enters `55`. The game shows "Correct!" followed by "You won! The secret was 55. Final score: 60." Balloons fire and the status changes to won.
+8. User clicks Submit Guess again. The game shows "You already won. Start a new game to play again." and ignores the input.
+9. User clicks New Game. Score resets to 0, attempts reset to 0, "Attempts left: 8" returns, history clears, a new secret is drawn, and the guess box is live again. Before the Bug 1 fix, this click did nothing.
 
 **Screenshot** *(optional)*: Not included. The walkthrough above and the `tests/test_app_ui.py` suite serve as the text-based record.
 
 ## 🧪 Test Results
 
-Terminal output from `python -m pytest tests/ -v`, 23 passed:
+Terminal output from `python -m pytest tests/ -v`, 44 passed:
 
 ```
 ============================= test session starts ==============================
-tests/test_app_ui.py::test_bug1_new_game_works_after_winning PASSED      [  4%]
-tests/test_app_ui.py::test_bug1_submit_responds_after_new_game PASSED    [  8%]
-tests/test_app_ui.py::test_bug3_out_of_range_guess_is_rejected_and_costs_no_attempt PASSED [ 13%]
-tests/test_app_ui.py::test_hint_direction_in_live_app PASSED             [ 17%]
-tests/test_game_logic.py::test_winning_guess PASSED                      [ 21%]
-tests/test_game_logic.py::test_guess_too_high PASSED                     [ 26%]
-tests/test_game_logic.py::test_guess_too_low PASSED                      [ 30%]
-tests/test_game_logic.py::test_check_guess_integer_comparison_not_string PASSED [ 34%]
-tests/test_game_logic.py::test_hint_message_direction PASSED             [ 39%]
-tests/test_game_logic.py::test_parse_guess_accepts_in_range_value PASSED [ 43%]
-tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[1000000] PASSED [ 47%]
-tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[101] PASSED [ 52%]
-tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[-1] PASSED [ 56%]
-tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[0] PASSED [ 60%]
-tests/test_game_logic.py::test_parse_guess_respects_difficulty_range PASSED [ 65%]
-tests/test_game_logic.py::test_parse_guess_accepts_boundaries PASSED     [ 69%]
-tests/test_game_logic.py::test_parse_guess_rejects_empty[] PASSED        [ 73%]
-tests/test_game_logic.py::test_parse_guess_rejects_empty[   ] PASSED     [ 78%]
-tests/test_game_logic.py::test_parse_guess_rejects_empty[None] PASSED    [ 82%]
-tests/test_game_logic.py::test_parse_guess_rejects_non_numeric[abc] PASSED [ 86%]
-tests/test_game_logic.py::test_parse_guess_rejects_non_numeric[4 2] PASSED [ 91%]
-tests/test_game_logic.py::test_parse_guess_rejects_non_numeric[1e3x] PASSED [ 95%]
-tests/test_game_logic.py::test_parse_guess_truncates_decimal_input PASSED [100%]
+tests/test_app_ui.py::test_bug1_new_game_works_after_winning PASSED      [  2%]
+tests/test_app_ui.py::test_bug1_submit_responds_after_new_game PASSED    [  4%]
+tests/test_app_ui.py::test_bug3_out_of_range_guess_is_rejected_and_costs_no_attempt PASSED [  6%]
+tests/test_app_ui.py::test_hint_direction_in_live_app PASSED             [  9%]
+tests/test_app_ui.py::test_edge_case_1_huge_float_does_not_crash_the_app PASSED [ 11%]
+tests/test_app_ui.py::test_edge_case_3_difficulty_change_resets_secret_into_range PASSED [ 13%]
+tests/test_app_ui.py::test_edge_case_3_difficulty_change_clears_stale_progress PASSED [ 15%]
+tests/test_app_ui.py::test_bug2_attempts_left_counts_down_from_limit_to_zero PASSED [ 18%]
+tests/test_game_logic.py::test_winning_guess PASSED                      [ 20%]
+tests/test_game_logic.py::test_guess_too_high PASSED                     [ 22%]
+tests/test_game_logic.py::test_guess_too_low PASSED                      [ 25%]
+tests/test_game_logic.py::test_check_guess_integer_comparison_not_string PASSED [ 27%]
+tests/test_game_logic.py::test_hint_message_direction PASSED             [ 29%]
+tests/test_game_logic.py::test_parse_guess_accepts_in_range_value PASSED [ 31%]
+tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[1000000] PASSED [ 34%]
+tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[101] PASSED [ 36%]
+tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[-1] PASSED [ 38%]
+tests/test_game_logic.py::test_parse_guess_rejects_out_of_range[0] PASSED [ 40%]
+tests/test_game_logic.py::test_parse_guess_respects_difficulty_range PASSED [ 43%]
+tests/test_game_logic.py::test_parse_guess_accepts_boundaries PASSED     [ 45%]
+tests/test_game_logic.py::test_parse_guess_rejects_empty[] PASSED        [ 47%]
+tests/test_game_logic.py::test_parse_guess_rejects_empty[   ] PASSED     [ 50%]
+tests/test_game_logic.py::test_parse_guess_rejects_empty[None] PASSED    [ 52%]
+tests/test_game_logic.py::test_parse_guess_rejects_non_numeric[abc] PASSED [ 54%]
+tests/test_game_logic.py::test_parse_guess_rejects_non_numeric[4 2] PASSED [ 56%]
+tests/test_game_logic.py::test_parse_guess_rejects_non_numeric[1e3x] PASSED [ 59%]
+tests/test_game_logic.py::test_parse_guess_accepts_whole_number_decimals PASSED [ 61%]
+tests/test_game_logic.py::test_edge_case_1_huge_float_does_not_crash[1.0e999] PASSED [ 63%]
+tests/test_game_logic.py::test_edge_case_1_huge_float_does_not_crash[1.5e400] PASSED [ 65%]
+tests/test_game_logic.py::test_edge_case_1_huge_float_does_not_crash[-1.0e999] PASSED [ 68%]
+tests/test_game_logic.py::test_edge_case_1_non_finite_words_are_rejected[nan] PASSED [ 70%]
+tests/test_game_logic.py::test_edge_case_1_non_finite_words_are_rejected[inf] PASSED [ 72%]
+tests/test_game_logic.py::test_edge_case_1_non_finite_words_are_rejected[-inf] PASSED [ 75%]
+tests/test_game_logic.py::test_edge_case_1_non_finite_words_are_rejected[infinity] PASSED [ 77%]
+tests/test_game_logic.py::test_edge_case_2_fractional_input_is_rejected[42.9] PASSED [ 79%]
+tests/test_game_logic.py::test_edge_case_2_fractional_input_is_rejected[42.1] PASSED [ 81%]
+tests/test_game_logic.py::test_edge_case_2_fractional_input_is_rejected[0.5] PASSED [ 84%]
+tests/test_game_logic.py::test_edge_case_2_fractional_input_is_rejected[99.999] PASSED [ 86%]
+tests/test_game_logic.py::test_edge_case_2_truncation_cannot_bypass_range_check PASSED [ 88%]
+tests/test_game_logic.py::test_parse_guess_tolerates_unusual_but_valid_integers[+50-50] PASSED [ 90%]
+tests/test_game_logic.py::test_parse_guess_tolerates_unusual_but_valid_integers[ 50 -50] PASSED [ 93%]
+tests/test_game_logic.py::test_parse_guess_tolerates_unusual_but_valid_integers[1_0-10] PASSED [ 95%]
+tests/test_game_logic.py::test_parse_guess_tolerates_unusual_but_valid_integers[\uff14\uff12-42] PASSED [ 97%]
+tests/test_game_logic.py::test_parse_guess_rejects_extremely_long_digit_string PASSED [100%]
 
-============================== 23 passed in 1.03s ==============================
+============================== 44 passed in 6.69s ==============================
 ```
 
 | Group | Count | What it covers |
 |-------|-------|----------------|
 | Starter tests | 3 | `check_guess` returns `"Win"`, `"Too High"`, `"Too Low"`. These failed with `NotImplementedError` before the refactor. |
-| Edge-case unit tests (`tests/test_game_logic.py`) | 16 | Out-of-range input (`1000000`, `101`, `-1`, `0`), boundaries (`1`, `100`), empty and whitespace and `None`, non-numeric strings, decimal truncation, per-difficulty range, integer vs. string comparison (`60` vs `7`), hint direction. |
-| UI tests (`tests/test_app_ui.py`) | 4 | Drive the real `app.py` through `streamlit.testing.v1.AppTest`: win then New Game restores a playable round, Submit responds after New Game, out-of-range guesses show an error and consume no attempt, hints point the right direction. |
+| Phase 2 unit tests (`tests/test_game_logic.py`) | 16 | Out-of-range input (`1000000`, `101`, `-1`, `0`), boundaries (`1`, `100`), empty and whitespace and `None`, non-numeric strings, whole-number decimals (`42.0`), per-difficulty range, integer vs. string comparison (`60` vs `7`), hint direction. |
+| Challenge 1 edge-case unit tests (`tests/test_game_logic.py`) | 17 | Infinity-producing floats (`1.0e999`, `1.5e400`, `-1.0e999`) and non-finite words (`nan`, `inf`, `infinity`) return a clean rejection instead of `OverflowError`. Fractional input (`42.9`, `0.5`, `99.999`) is rejected, and `100.7` cannot bypass the range check through truncation. Unusual but valid integers (`+50`, `1_0`, full-width `４２`) are documented. A 5000-digit string does not crash. |
+| UI tests (`tests/test_app_ui.py`) | 8 | Drive the real `app.py` through `streamlit.testing.v1.AppTest`: win then New Game restores a playable round, Submit responds after New Game, out-of-range guesses consume no attempt, hints point the right direction, `1.0e999` raises no exception in the script run, switching difficulty regenerates the secret inside the new range and clears progress, and "Attempts left" counts 8 down to 0 then ends the game. |
 
 ## 🚀 Stretch Features
 
+- [x] **Challenge 1: Advanced Edge-Case Testing.** Four post-fix defects found by probing with hostile input (`1.0e999` crash, fractional truncation bypassing the range check, difficulty switch leaving the secret out of range, lagging "Attempts left" banner). 17 new unit tests and 4 new UI tests, 44 passing total. Prompts and reasoning are in `ai_interactions.md`.
 - [ ] [If you choose to complete Challenge 4, describe the Enhanced UI changes here — a screenshot is optional]

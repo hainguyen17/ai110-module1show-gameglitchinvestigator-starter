@@ -4,6 +4,8 @@ Nothing in this module imports Streamlit. Every function takes plain values
 and returns plain values so it can be unit-tested with pytest without a UI.
 """
 
+import math
+
 # FIX: Refactored all four logic functions out of app.py into this module
 # using Cursor agent mode, so they can be imported by both app.py and the
 # tests. Reviewed the diff function-by-function before accepting.
@@ -28,6 +30,9 @@ def parse_guess(raw, low: int = 1, high: int = 100):
     """
     Parse user input into an int guess and validate it against [low, high].
 
+    Accepts whole numbers written as "42" or "42.0". Rejects non-integer
+    decimals like "42.9" rather than silently truncating them.
+
     Returns: (ok: bool, guess_int: int | None, error_message: str | None)
     """
     if raw is None or str(raw).strip() == "":
@@ -35,10 +40,24 @@ def parse_guess(raw, low: int = 1, high: int = 100):
 
     text = str(raw).strip()
 
+    # FIX (Challenge 1, edge case 1): "1.0e999" parses to float infinity and
+    # int(inf) raises OverflowError, which the previous except clause did not
+    # catch, so the app crashed with a traceback. OverflowError is now caught.
+    #
+    # FIX (Challenge 1, edge case 2): the previous code truncated "42.9" to 42
+    # and "100.7" to 100, which let 100.7 pass the range check. Decimals are
+    # now accepted only when they are exactly whole (e.g. "42.0").
     try:
-        # Accept "42" and "42.0" but reject "abc", "4 2", "", etc.
-        value = int(float(text)) if "." in text else int(text)
-    except (ValueError, TypeError):
+        if "." in text:
+            as_float = float(text)
+            if not math.isfinite(as_float):
+                return False, None, "That is not a number."
+            if not as_float.is_integer():
+                return False, None, "Enter a whole number."
+            value = int(as_float)
+        else:
+            value = int(text)
+    except (ValueError, TypeError, OverflowError):
         return False, None, "That is not a number."
 
     # FIX (Bug 3): Added range validation. The original only checked "is it a

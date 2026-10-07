@@ -93,6 +93,69 @@ def test_parse_guess_rejects_non_numeric(raw):
     assert err == "That is not a number."
 
 
-def test_parse_guess_truncates_decimal_input():
-    # Original behavior preserved: "42.9" becomes 42.
-    assert parse_guess("42.9") == (True, 42, None)
+def test_parse_guess_accepts_whole_number_decimals():
+    # "42.0" is a whole number written with a decimal point. Accept it.
+    assert parse_guess("42.0") == (True, 42, None)
+    assert parse_guess("50.") == (True, 50, None)
+
+
+# ---------------------------------------------------------------------------
+# Challenge 1: advanced edge cases. Each of these broke the game after the
+# Phase 2 fixes were in place.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw", ["1.0e999", "1.5e400", "-1.0e999"])
+def test_edge_case_1_huge_float_does_not_crash(raw):
+    # float("1.0e999") is inf, and int(inf) raises OverflowError. The original
+    # except clause caught only ValueError/TypeError, so this crashed the app
+    # with a traceback. Must now be a clean rejection.
+    ok, value, err = parse_guess(raw, low=1, high=100)
+    assert ok is False
+    assert value is None
+    assert err == "That is not a number."
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "infinity"])
+def test_edge_case_1_non_finite_words_are_rejected(raw):
+    # float() accepts these spellings, so they must not slip through either.
+    ok, value, err = parse_guess(raw, low=1, high=100)
+    assert ok is False
+    assert err == "That is not a number."
+
+
+@pytest.mark.parametrize("raw", ["42.9", "42.1", "0.5", "99.999"])
+def test_edge_case_2_fractional_input_is_rejected(raw):
+    # The original truncated 42.9 to 42 silently. A whole-number game should
+    # tell the player instead of guessing what they meant.
+    ok, value, err = parse_guess(raw, low=1, high=100)
+    assert ok is False
+    assert value is None
+    assert err == "Enter a whole number."
+
+
+def test_edge_case_2_truncation_cannot_bypass_range_check():
+    # 100.7 used to truncate to 100 and pass the 1-100 range check even though
+    # 100.7 > 100. Now rejected before the range check is reached.
+    ok, value, err = parse_guess("100.7", low=1, high=100)
+    assert ok is False
+    assert value is None
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("+50", 50),      # explicit plus sign
+    (" 50 ", 50),     # surrounding whitespace
+    ("1_0", 10),      # Python accepts underscores in int()
+    ("４２", 42),      # full-width digits are valid Unicode decimals
+])
+def test_parse_guess_tolerates_unusual_but_valid_integers(raw, expected):
+    # Documenting current behavior: these parse because int() accepts them.
+    assert parse_guess(raw, low=1, high=100) == (True, expected, None)
+
+
+def test_parse_guess_rejects_extremely_long_digit_string():
+    # Python 3.11+ caps int(str) at 4300 digits and raises ValueError.
+    # Either outcome (ValueError -> "not a number", or huge int -> out of
+    # range) must be a clean rejection, never a crash.
+    ok, value, err = parse_guess("1" * 5000, low=1, high=100)
+    assert ok is False
+    assert value is None
