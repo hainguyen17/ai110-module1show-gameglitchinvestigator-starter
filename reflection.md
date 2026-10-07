@@ -65,13 +65,16 @@ Document at least 3 bugs you found. Add rows as needed.
 
 ## 4. What did you learn about Streamlit and state?
 
-- How would you explain Streamlit "reruns" and session state to a friend who has never used Streamlit?
+Here is how I explain it to a friend. A Streamlit app is not a program that starts once and then waits for clicks. Every time you touch anything on the page, Streamlit throws away the whole script and runs it again from line 1 to the bottom. That is a rerun. Every normal Python variable is reborn on each rerun, so if you write `secret = random.randint(1, 100)` at the top of the file, you get a brand new secret on every click, which is exactly why the original README says the secret "has commitment issues." `st.session_state` is the one dictionary that survives reruns. Anything you store there on one run is still there on the next, so the secret, the attempt count, and the score all have to live in it.
+
+The part that bit this project is that session state only persists what you tell it to. The New Game handler stored `attempts` and `secret` but forgot `status`, so `status` stayed `"won"` across every rerun and the `st.stop()` gate kept firing. The rerun model also explains why that gate made both buttons look dead: `st.stop()` ends the script early, so the `if submit:` block lower in the file never executed. Once I understood that the file is a top-to-bottom script that runs on every click, the fix was obvious, and writing `tests/test_app_ui.py` with `AppTest` made the model concrete because each `.run()` call is literally one rerun.
 
 ---
 
 ## 5. Looking ahead: your developer habits
 
-- What is one habit or strategy from this project that you want to reuse in future labs or projects?
-  - This could be a testing habit, a prompting strategy, or a way you used Git.
-- What is one thing you would do differently next time you work with AI on a coding task?
-- In one or two sentences, describe how this project changed the way you think about AI generated code.
+**Habit to reuse.** Prove the bug before proving the fix. For both bugs I fixed, I ran the reproduction against the original `app.py` first (via `git show af27d7b:app.py`) and recorded the failure: `status` stayed `"won"` after New Game, and a guess of `1000000` incremented `attempts` from 1 to 2 with no error. Only then did I run the same script against the fixed file. A test that passes on both versions proves nothing, and this before-and-after habit caught that the attempt counter ordering was part of bug 3, a detail that a range-check-only fix misses. I also want to keep the two-commit pattern: one commit with `# FIXME` markers and the written bug report, one commit with the fix, so the diff for the fix stays small and reviewable.
+
+**What I will do differently.** Next time I will give the AI a tighter scope before it writes any code. When I asked the agent to move `update_score` into `logic_utils.py`, I said "move the logic" and it took that as permission to rewrite the scoring formula. The result was cleaner but changed player scores and was out of scope for the two bugs I was fixing. I caught it in the diff and had it restored verbatim with a `# FIXME` instead, but a one-line instruction up front ("move as-is, do not change behavior, flag anything suspicious in a comment") saves that round trip. I will also start one chat per bug as the assignment suggested instead of fixing both in a single session, because by the end the shared refactor made it harder to attribute each change to one bug.
+
+**How this changed my view of AI-generated code.** The starter code looked finished: it had docstrings, a settings sidebar, a debug panel, and a caption claiming it was production-ready, and it had 3 state bugs and a backwards hint message. I now read AI-generated code as a first draft from a confident collaborator who has not run it, and I treat "does the test fail on the old version and pass on the new one" as the minimum bar for calling anything fixed.
